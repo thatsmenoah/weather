@@ -179,7 +179,7 @@ class WeatherScreenState extends State<WeatherScreen> {
 
   // ========== НОВАЯ ЛОГИКА ИНИЦИАЛИЗАЦИИ ==========
   
-  Future<void> _initializeApp() async {
+ Future<void> _initializeApp() async {
     // 1. Загружаем данные из хранилища
     await _dataSystem.init();
     
@@ -194,18 +194,15 @@ class WeatherScreenState extends State<WeatherScreen> {
     }
     
     // 3. Загружаем кэшированные данные
-    _loadAllFromStorage();
+    _loadAllFromStorage(); // finishLoading уже вызывается внутри если данные есть
     
     // 4. Если есть приоритетный город — перезаписываем название
     if (priorityLocation != null) {
       cityName = priorityLocation.name;
     }
     
-    // 5. Если есть ЛЮБЫЕ кэшированные данные — сразу показываем их
-    if (weatherData != null) {
-      _loadingManager.finishLoading(fromStorage: true);
-    } else {
-      // Нет данных — показываем загрузку
+    // 5. Если данных нет — показываем загрузку
+    if (weatherData == null) {
       _loadingManager.startLoading();
     }
     
@@ -323,11 +320,10 @@ Future<void> _saveToStorage() async {
       }
     }
     
-    _loadingManager.finishLoading(fromStorage: true);
+    // ✅ Убираем finishLoading отсюда - он вызывается в _initializeApp
     if (mounted) setState(() {});
   }
 }
-
   // ========== ПУБЛИЧНЫЕ МЕТОДЫ ==========
 
   void scrollToBottom() {
@@ -364,13 +360,22 @@ Future<void> _saveToStorage() async {
       lat = position.latitude;
       lon = position.longitude;
     } catch (e) {
-      // Используем текущие координаты или Москву
-      lat ??= 55.7558;
-      lon ??= 37.6173;
+      // Проверяем приоритетный город при ошибке геолокации
+      if (!mounted) return;
+      
+      final priorityLocation = FavoritesStorage.getPriority();
+      if (priorityLocation != null) {
+        lat = priorityLocation.lat;
+        lon = priorityLocation.lon;
+      } else {
+        // Фоллбэк на Москву только если нет приоритетного города
+        lat ??= 55.7558;
+        lon ??= 37.6173;
+      }
     }
     
     await _fetchFreshData();
-  }
+}
 
   // ========== UI ==========
 
@@ -786,6 +791,70 @@ Future<void> _saveToStorage() async {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ========== FADE IN WRAPPER ==========
+
+class FadeInWrapper extends StatefulWidget {
+  final Widget child;
+  final Duration duration;
+  final double offsetY;
+
+  const FadeInWrapper({
+    super.key,
+    required this.child,
+    this.duration = const Duration(milliseconds: 400),
+    this.offsetY = 20.0,
+  });
+
+  @override
+  State<FadeInWrapper> createState() => _FadeInWrapperState();
+}
+
+class _FadeInWrapperState extends State<FadeInWrapper>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _fadeAnimation;
+  late Animation<Offset> _slideAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: widget.duration,
+      vsync: this,
+    );
+    
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
+    );
+    
+    _slideAnimation = Tween<Offset>(
+      begin: Offset(0, widget.offsetY / 100),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
+    );
+    
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: SlideTransition(
+        position: _slideAnimation,
+        child: widget.child,
       ),
     );
   }
